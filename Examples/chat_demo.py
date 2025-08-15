@@ -20,9 +20,7 @@ client = OpenAI(api_key=api_key)
 # )
 # print(response.output_text)
 
-# `messages` is **how you structure the conversation** between the system, user, and assistant.
-
-
+# Chat completion example with `messages` is **how you structure the conversation** between the system, user, and assistant.
 response = client.chat.completions.create(
     model="gpt-4o-mini",
     messages=[

@@ -1,2 +1,11 @@
 .env
 venv/
+# python
+__pycache__/
+*.pyc
+# env
+.env
+# data/artifacts
+/data/
+*.index
+summaries_metadata.json
