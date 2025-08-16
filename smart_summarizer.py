@@ -1,3 +1,4 @@
+# ---- Part Three: Turn Summarizer into Q&A Bot--- 
 import os 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -6,15 +7,26 @@ from bs4 import BeautifulSoup
 from langchain.prompts import PromptTemplate
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-# ---- Add Embeddings & Memory--- (RAG)
 
-# Step 1: Load API key
+# --- Step 1: Initialize ---
+# Load API key
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Initialize Embeddings + FAISS
+embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
 
-# Step 2: Fetch & clean article text
+# Path to store FAISS index (memory)
+faiss_index_path = "faiss_index"
+if os.path.exists(faiss_index_path):
+    faiss_store = FAISS.load_local(faiss_index_path, embedding_model, allow_dangerous_deserialization=True)
+else:
+    faiss_store = None
+
+
+# --- Step 2: Fetch & Clean Article ---
 def fetch_article_text(url):
     try:
         response = requests.get(url, timeout=20)
@@ -31,74 +43,99 @@ def fetch_article_text(url):
             text = soup.get_text(separator=" ")
         clean_text = " ".join(text.split())
         return clean_text
+    
     except requests.exceptions.RequestException as e:
         print(f"Error fetching URL: {e}")
         return ""
 
-# Step 3: Initialize Embeddings + FAISS
-embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
-
-# Load or create FAISS index
-faiss_index_path = "faiss_index"
-if os.path.exists(faiss_index_path):
-    faiss_store = FAISS.load_local(faiss_index_path, embedding_model, allow_dangerous_deserialization=True)
-else:
-    faiss_store = None
-
-
-# Step 4: Summarize with memory
-def summarize_text(text,client, embedding_model, faiss_store, faiss_index_path, style="concise"):
-# 4a. embed input text 
-    query_vector = embedding_model.embed_query(text[:1000])
-
-# 4b. Check FAISS for similar summaries
-    if faiss_store:
-        docs = faiss_store.similarity_search_by_vector(query_vector,k=3)
-        docs = [doc for doc in docs if doc.metadata.get("source_url") == url]
-        if docs:
-            print("Found similar summary in memory. Returning cached result.")
-            return docs[0].page_content, faiss_store
-    
-# 4c. otherwise, call GPT
+# --- Step 3: Summarization ---
+def summarize_text(text, client, style="concise"):
+    """Summarize the text using GPT-4o-mini."""
     prompt_template = PromptTemplate(
-        input_variables = ["style", "content"],
+        input_variables=["style","content"],
         template="Summarize the following text in a {style} way: \n\n{content}"
     )
     prompt = prompt_template.format(style=style, content=text[:12000])
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role":"user", "content":prompt}],
+        messages=[{"role": "user","content": prompt}],
         temperature=0.5,
         max_tokens=250
     )
-    summary = response.choices[0].message.content.strip()
-# 4d. save the new summary in FAISS
-    if faiss_store is None:
-        faiss_store = FAISS.from_texts([summary], embedding_model, metadatas=[{"similarity":1.0}])
+    return response.choices[0].message.content.strip()
+
+
+# --- Step 4: Split Text into Chunks (for RAG) ---
+def split_text(text, chunk_size=500, chunk_overlap=50):
+    """Split long text into chunks for embedding and retrieval."""
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap
+    )
+    return splitter.split_text(text)
+
+
+# --- Step 5: Store Chunks in FAISS ---
+def store_chunks_in_faiss(chunks, embedding_model, faiss_index_path, metadata=None):
+    """Store or update chunks in FAISS vector DB."""
+    if os.path.exists(faiss_index_path):
+        faiss_store = FAISS.load_local(faiss_index_path, embedding_model, allow_dangerous_deserialization=True)
     else:
-        faiss_store.add_texts([summary], metadatas=[{"source_url": url, "style": style}])
-
+        faiss_store = FAISS.from_texts(chunks, embedding_model,metadatas=metadata or [{}])
+    
     faiss_store.save_local(faiss_index_path)
-    return summary , faiss_store
+    return faiss_store
 
+# --- Step 6: Q&A Function ---
+def answer_question(question, faiss_store, client, k=3):
+    """Answer a user question using RAG with FAISS memory and GPT."""
+    embedding_model = faiss_store.embeddings
+    query_vector = embedding_model.embed_query(question)
 
-# ------- CLI -------
+    # retrieve relevenat chunks from FAISS
+    docs = faiss_store.similarity_search_by_vector(query_vector, k=k)
+    
+    if not docs:
+        return "🤔 Sorry, I couldn't find anything in the article related to your question."
+
+    print(f"✅ Retrieved {len(docs)} relevant chunks from FAISS.")
+    context = "\n\n".join([doc.page_content for doc in docs])
+
+    # Ask GPT using the retrieved context
+    prompt = f"Answer the question using the provided text, be concise and factual.\n\nContext:\n{context}\n\nQuestion: {question}"
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role":"user", "content": prompt}],
+        temperature=0.2,
+        max_tokens=250
+    )
+    return response.choices[0].message.content.strip()
+
+# --- Step 7: CLI ---
 if __name__ == "__main__":
     url = input("Enter article URL: ").strip()
     style = input("Summary style (concise/detailed/bullets): ").strip().lower() or "concise"
 
     text = fetch_article_text(url)
     if not text.strip():
-        print("Error: No text provided.")
+        print("Error: No Text provided")
     else:
-        summary, faiss_store = summarize_text(
-            text,
-            client,
-            embedding_model,
-            faiss_store,
-            faiss_index_path,
-            style
-        )
+        # Summarize first
+        summary = summarize_text(text, client, style)
         print("\n=== Summary ===\n")
         print(summary)
+
+        # Split and store chunks in FAISS for RAG
+        chunks = split_text(text)
+        metadata = [{"source_url":url} for _ in chunks]
+        faiss_store = store_chunks_in_faiss(chunks, embedding_model, faiss_index_path, metadata)
+
+         # Q&A loop
+        while True:
+            question = input("\nAsk a question about the article (or 'exit'): ").strip()
+            if question.lower() in ["exit", "quit"]:
+                break
+            answer = answer_question(question, faiss_store, client)
+            print("\nAnswer:", answer)
