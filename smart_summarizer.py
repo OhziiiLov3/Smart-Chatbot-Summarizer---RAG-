@@ -40,7 +40,7 @@ embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
 # Load or create FAISS index
 faiss_index_path = "faiss_index"
 if os.path.exists(faiss_index_path):
-    faiss_store = FAISS.load_local(faiss_index_path, embedding_model, allow_danerous_deserializetion=True)
+    faiss_store = FAISS.load_local(faiss_index_path, embedding_model, allow_dangerous_deserialization=True)
 else:
     faiss_store = None
 
@@ -52,9 +52,10 @@ def summarize_text(text,client, embedding_model, faiss_store, faiss_index_path, 
 
 # 4b. Check FAISS for similar summaries
     if faiss_store:
-        docs = faiss_store.similarity_search_by_vector(query_vector,k=1)
+        docs = faiss_store.similarity_search_by_vector(query_vector,k=3)
+        docs = [doc for doc in docs if doc.metadata.get("source_url") == url]
         if docs:
-            print("Found similar sumary in memory. Returning cached result.")
+            print("Found similar summary in memory. Returning cached result.")
             return docs[0].page_content, faiss_store
     
 # 4c. otherwise, call GPT
@@ -73,9 +74,9 @@ def summarize_text(text,client, embedding_model, faiss_store, faiss_index_path, 
     summary = response.choices[0].message.content.strip()
 # 4d. save the new summary in FAISS
     if faiss_store is None:
-        faiss_store = FAISS.from_texts([summary], embeddings=embedding_model, metadatas=[{"similarity":1.0}])
+        faiss_store = FAISS.from_texts([summary], embedding_model, metadatas=[{"similarity":1.0}])
     else:
-        faiss_store.ADD_TEXTS([summary], metadatas=[{"source": "summary"}])
+        faiss_store.add_texts([summary], metadatas=[{"source_url": url, "style": style}])
 
     faiss_store.save_local(faiss_index_path)
     return summary , faiss_store
