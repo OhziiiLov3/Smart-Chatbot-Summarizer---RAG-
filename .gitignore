@@ -9,3 +9,4 @@ __pycache__/
 /data/
 *.index
 summaries_metadata.json
+faiss_index/

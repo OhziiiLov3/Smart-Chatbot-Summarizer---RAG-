@@ -7,6 +7,7 @@ from langchain.prompts import PromptTemplate
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 
+# ---- Add Embeddings & Memory--- (RAG)
 
 # Step 1: Load API key
 load_dotenv()
