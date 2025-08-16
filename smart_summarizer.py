@@ -4,114 +4,99 @@ from openai import OpenAI
 import requests 
 from bs4 import BeautifulSoup
 from langchain.prompts import PromptTemplate
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
 
 
-
-# Step 1: Load api key from .env and initailize OpenAI client
+# Step 1: Load API key
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Step 2: Fetch Article Text
-"""
-    Fetch and clean the main text of an article from a URL.
-    Steps:
-    1. Download HTML.
-    2. Parse with BeautifulSoup.
-    3. Remove scripts, styles, nav, footer, aside, header.
-    4. Extract text from main sections.
-    5. Clean whitespace.
- """
 
+# Step 2: Fetch & clean article text
 def fetch_article_text(url):
-    #  1. Download HTML.
     try:
         response = requests.get(url, timeout=20)
         response.raise_for_status()
-        #  2. Parse with BeautifulSoup. 
         soup = BeautifulSoup(response.text, "html.parser")
-        # 3. Remove scripts, styles, nav, footer, aside, header.
+    
         for tag in soup(["script","style","noscript", "header", "footer","nav","aside"]):
             tag.decompose()
-        # 4.  Extract text from main sections.
+    
         main_content = soup.find("article")
         if main_content:
             text = main_content.get_text(separator=" ")
         else:
             text = soup.get_text(separator=" ")
-        # 5. Clean whitespace.
         clean_text = " ".join(text.split())
         return clean_text
-    
     except requests.exceptions.RequestException as e:
         print(f"Error fetching URL: {e}")
         return ""
-# Step 3: Use prompt template and OpenAI to summarize piece of text 
-"""
-    Summarize a piece of text using a prompt template and OpenAI API.
-    Steps:
-    1. Define the prompt template.
-    2. Format the prompt with the input text and chosen style.
-    3. Call the OpenAI API to generate a summary.
-    4. Extract and return the summary text.
-"""
-def summarize_text(text, style="concise"):
-#   1. Define the prompt template.
-#       - 'style' allows dynamic summary types: concise, detailed, bullet points, etc.
-#       - 'content' is the actual text we want to summarize
+
+# Step 3: Initialize Embeddings + FAISS
+embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
+
+# Load or create FAISS index
+faiss_index_path = "faiss_index"
+if os.path.exists(faiss_index_path):
+    faiss_store = FAISS.load_local(faiss_index_path, embedding_model, allow_danerous_deserializetion=True)
+else:
+    faiss_store = None
+
+
+# Step 4: Summarize with memory
+def summarize_text(text,client, embedding_model, faiss_store, faiss_index_path, style="concise"):
+# 4a. embed input text 
+    query_vector = embedding_model.embed_query(text[:1000])
+
+# 4b. Check FAISS for similar summaries
+    if faiss_store:
+        docs = faiss_store.similarity_search_by_vector(query_vector,k=1)
+        if docs:
+            print("Found similar sumary in memory. Returning cached result.")
+            return docs[0].page_content, faiss_store
+    
+# 4c. otherwise, call GPT
     prompt_template = PromptTemplate(
         input_variables = ["style", "content"],
         template="Summarize the following text in a {style} way: \n\n{content}"
     )
-# Step 2:  Format the prompt with the input text and chosen style.
-# - Use the first 12,000 characters as a simple token guard
     prompt = prompt_template.format(style=style, content=text[:12000])
 
-# Step 3: Call the OpenAI API to generate a summary.
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role":"user", "content":prompt}],
         temperature=0.5,
         max_tokens=250
     )
-    return response.choices[0].message.content.strip()
+    summary = response.choices[0].message.content.strip()
+# 4d. save the new summary in FAISS
+    if faiss_store is None:
+        faiss_store = FAISS.from_texts([summary], embeddings=embedding_model, metadatas=[{"similarity":1.0}])
+    else:
+        faiss_store.ADD_TEXTS([summary], metadatas=[{"source": "summary"}])
+
+    faiss_store.save_local(faiss_index_path)
+    return summary , faiss_store
 
 
 # ------- CLI -------
 if __name__ == "__main__":
-    choice = input("Enter 'u' for Url or 't' for text: ").strip().lower()
+    url = input("Enter article URL: ").strip()
     style = input("Summary style (concise/detailed/bullets): ").strip().lower() or "concise"
 
-    if choice == "u":
-        url = input("Enter article URL: ").strip()
-        text = fetch_article_text(url)
-    else:
-        print("Paste your text (end input with empty line):")
-        lines = []
-        while True:
-            line = input()
-            if line.strip() == "":
-                break
-            lines.append(line)
-        text = "\n".join(lines)
-
+    text = fetch_article_text(url)
     if not text.strip():
-        print("Error: No text provided. Exiting.")
+        print("Error: No text provided.")
     else:
-        summary = summarize_text(text, style)
-        print("\n Summary:\n")
+        summary, faiss_store = summarize_text(
+            text,
+            client,
+            embedding_model,
+            faiss_store,
+            faiss_index_path,
+            style
+        )
+        print("\n=== Summary ===\n")
         print(summary)
-
-# # TEST-FUNCTIONS
-# if __name__ == "__main__":
-#     url =  "https://en.wikipedia.org/wiki/OpenAI"  # example URL
-#     text = fetch_article_text(url)
-#     print("---- Start of fetched text ----")
-#     print(text[:1000])  # print first 1000 characters for preview
-#     print("---- End of fetched text ----")
-
-
-#     # Generate summary
-#     summary = summarize_text(text, style="concise")
-#     print("---- Start of summary ----")
-#     print(summary)
-#     print("---- End of summary ----")
