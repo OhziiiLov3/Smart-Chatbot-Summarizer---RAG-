@@ -80,8 +80,12 @@ def split_text(text, chunk_size=500, chunk_overlap=50):
 def store_chunks_in_faiss(chunks, embedding_model, faiss_index_path, metadata=None):
     """Store or update chunks in FAISS vector DB."""
     if os.path.exists(faiss_index_path):
+        # Load existing index
         faiss_store = FAISS.load_local(faiss_index_path, embedding_model, allow_dangerous_deserialization=True)
+        # add new chunks into it
+        faiss_store.add_texts(chunks, metadatas=metadata or [{}])
     else:
+        # Create new index from scratch
         faiss_store = FAISS.from_texts(chunks, embedding_model,metadatas=metadata or [{}])
     
     faiss_store.save_local(faiss_index_path)
@@ -103,11 +107,25 @@ def answer_question(question, faiss_store, client, k=3):
     context = "\n\n".join([doc.page_content for doc in docs])
 
     # Ask GPT using the retrieved context
-    prompt = f"Answer the question using the provided text, be concise and factual.\n\nContext:\n{context}\n\nQuestion: {question}"
+    prompt = f"""
+    You are a highly intelligent assistant specializing in answering questions based strictly on provided text excerpts. 
+    Use ONLY the information in the context to answer the question. 
+    Be concise, factual, and clear. 
+    Do not include any information not found in the context.
+    If the answer is not in the text, respond with 'I don't know'. 
+    Provide bullet points if it helps clarify the answer.
+
+    Context:
+    {context}
+    """
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role":"user", "content": prompt}],
+        messages=[
+            {"role":"system", "content": prompt},
+            {"role":"user", "content": question},
+          
+            ],
         temperature=0.2,
         max_tokens=250
     )
