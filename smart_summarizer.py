@@ -116,9 +116,9 @@ def answer_question(question, faiss_store, client, k=3):
     docs = faiss_store.similarity_search_by_vector(query_vector, k=k)
     
     if not docs:
-        return "🤔 Sorry, I couldn't find anything in the article related to your question."
+        return "Sorry, I couldn't find anything in the article related to your question."
 
-    print(f"✅ Retrieved {len(docs)} relevant chunks from FAISS.")
+  
     context = "\n\n".join([doc.page_content for doc in docs])
 
     # Ask GPT using the retrieved context
@@ -149,7 +149,7 @@ def answer_question(question, faiss_store, client, k=3):
 # --- Step 7: CLI ---
 if __name__ == "__main__":
     choice = input("Do you want to load from (1) URL or (2) File? ").strip()
-    style = input("Summary style (concise/detailed/bullets): ").strip().lower() or "concise"
+    style = input("Summary style (concise/detailed/bullets/simple): ").strip().lower() or "concise"
     if choice == "1":
         url = input("Enter article URL: ").strip()
         text = fetch_article_text(url)
