@@ -8,6 +8,7 @@ from langchain.prompts import PromptTemplate
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import TextLoader, PyPDFLoader
 
 
 # --- Step 1: Initialize ---
@@ -47,8 +48,22 @@ def fetch_article_text(url):
     except requests.exceptions.RequestException as e:
         print(f"Error fetching URL: {e}")
         return ""
+    
+# Step 3: Load Local Files
+def load_local_file(file_name):
+    file_path = os.path.join("data", file_name)
 
-# --- Step 3: Summarization ---
+    if file_path.endswith(".txt") or file_path.endswith(".md"):
+        loader = TextLoader(file_path, encoding="utf-8")
+    elif file_path.endswith('.pdf'):
+        loader = PyPDFLoader(file_path)
+    else: 
+        raise ValueError("Unsupported file type. Use .txt, .md, or .pdf")
+
+    docs = loader.load()
+    return "\n".join([doc.page_content for doc in docs])
+
+# --- Step 4: Summarization ---
 def summarize_text(text, client, style="concise"):
     """Summarize the text using GPT-4o-mini."""
     prompt_template = PromptTemplate(
@@ -66,7 +81,7 @@ def summarize_text(text, client, style="concise"):
     return response.choices[0].message.content.strip()
 
 
-# --- Step 4: Split Text into Chunks (for RAG) ---
+# --- Step 5: Split Text into Chunks (for RAG) ---
 def split_text(text, chunk_size=500, chunk_overlap=50):
     """Split long text into chunks for embedding and retrieval."""
     splitter = RecursiveCharacterTextSplitter(
@@ -76,7 +91,7 @@ def split_text(text, chunk_size=500, chunk_overlap=50):
     return splitter.split_text(text)
 
 
-# --- Step 5: Store Chunks in FAISS ---
+# --- Step 6: Store Chunks in FAISS ---
 def store_chunks_in_faiss(chunks, embedding_model, faiss_index_path, metadata=None):
     """Store or update chunks in FAISS vector DB."""
     if os.path.exists(faiss_index_path):
@@ -91,7 +106,7 @@ def store_chunks_in_faiss(chunks, embedding_model, faiss_index_path, metadata=No
     faiss_store.save_local(faiss_index_path)
     return faiss_store
 
-# --- Step 6: Q&A Function ---
+# --- Step 7: Q&A Function ---
 def answer_question(question, faiss_store, client, k=3):
     """Answer a user question using RAG with FAISS memory and GPT."""
     embedding_model = faiss_store.embeddings
@@ -133,27 +148,43 @@ def answer_question(question, faiss_store, client, k=3):
 
 # --- Step 7: CLI ---
 if __name__ == "__main__":
-    url = input("Enter article URL: ").strip()
+    choice = input("Do you want to load from (1) URL or (2) File? ").strip()
     style = input("Summary style (concise/detailed/bullets): ").strip().lower() or "concise"
+    if choice == "1":
+        url = input("Enter article URL: ").strip()
+        text = fetch_article_text(url)
+        source_info = {"source_url":url}
 
-    text = fetch_article_text(url)
+    elif choice == "2":
+        file_path = input("Enter file path (.txt, .md, .pdf): ").strip()
+        text = load_local_file(file_path)
+        source_info =  {"source_url":file_path}
+
+    else:
+        print("Invalid choice. Exiting")
+        exit()
+
     if not text.strip():
         print("Error: No Text provided")
-    else:
+    
         # Summarize first
-        summary = summarize_text(text, client, style)
-        print("\n=== Summary ===\n")
-        print(summary)
+    summary = summarize_text(text, client, style)
+    print("\n=== Summary ===\n")
+    print(summary)
 
-        # Split and store chunks in FAISS for RAG
-        chunks = split_text(text)
-        metadata = [{"source_url":url} for _ in chunks]
-        faiss_store = store_chunks_in_faiss(chunks, embedding_model, faiss_index_path, metadata)
+    # Split and store chunks in FAISS for RAG
+    chunks = split_text(text)
+    # Create metadata per chunk
+    metadata = [source_info for _ in range(len(chunks))]
+    faiss_store = store_chunks_in_faiss(chunks, embedding_model, faiss_index_path, metadata)
 
          # Q&A loop
-        while True:
-            question = input("\nAsk a question about the article (or 'exit'): ").strip()
-            if question.lower() in ["exit", "quit"]:
-                break
-            answer = answer_question(question, faiss_store, client)
-            print("\nAnswer:", answer)
+    while True:
+        question = input("\nAsk a question about the article (or 'exit'): ").strip()
+        if question.lower() in ["exit", "quit"]:
+            break
+        answer = answer_question(question, faiss_store, client)
+        print("\nAnswer:", answer)
+
+
+
