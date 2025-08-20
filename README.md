@@ -21,28 +21,29 @@ Load one or more files or a URL.
 
 ```mermaid
 flowchart TD
+
     A[Start] --> B{Input Source?}
     B -->|URL| C[Fetch Article Text with BeautifulSoup]
-    B -->|Files| D[Load Files from /data folder<br/>(.txt, .md, .pdf)]
+    B -->|Files| D[Load Files from /data folder (.txt, .md, .pdf)]
 
     C --> E[Summarize with GPT (concise/detailed/etc.)]
-    D --> E[Summarize with GPT (concise/detailed/etc.)]
+    D --> E
 
-    E --> F[Split into Chunks<br/>(500–1000 chars)]
-    F --> G[Attach Metadata<br/>(filename, type, chunk ID)]
+    E --> F[Split into Chunks (500-1000 chars)]
+    F --> G[Attach Metadata (filename, type, chunk ID)]
 
     G --> H{FAISS Index Exists?}
     H -->|Yes| I[Load FAISS Index and Add New Chunks]
     H -->|No| J[Create New FAISS Index from Chunks]
 
     I --> K[Save Updated Index]
-    J --> K[Save Index]
+    J --> K
 
     K --> L[User Q&A Loop]
     L --> M[Embed Query with OpenAI Embeddings]
     M --> N[Retrieve Relevant Chunks from FAISS]
     N --> O[Ask GPT with Retrieved Context]
     O --> P[Return Answer to User]
-
-    P --> L[Repeat Until Exit]
+    
+    P --> L
 ```
