@@ -1,4 +1,4 @@
-# ---- Part Three: Turn Summarizer into Q&A Bot--- 
+# ---- Part 4 — Multi-File Support + Chunking--- 
 import os 
 from dotenv import load_dotenv
 from openai import OpenAI
