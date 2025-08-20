@@ -91,32 +91,47 @@ def store_chunks_in_faiss(chunks, embedding_model, faiss_index_path, metadata=No
     return faiss_store
 
 # --- Step 6: Q&A Function ---
-def answer_question_rag(question, faiss_store, client, k=3):
-    """Answer a user question using RAG with FAISS memory and GPT."""
+def answer_question_with_memory(question, faiss_store, client, chat_history, k=3):
+    # Retrieve relevant document chunks
     query_vector = faiss_store.embeddings.embed_query(question)
-    # retrieve relevenat chunks from FAISS
     docs = faiss_store.similarity_search_by_vector(query_vector, k=k)
-    
-    if not docs:
-        return "Sorry, I couldn't find anything in the article related to your question."
+    retrieved_chunks = "\n\n".join([doc.page_content for doc in docs]) if docs else ""
 
-    retrieved_chunks = "\n\n".join([doc.page_content for doc in docs])
+    # Include previous Q&A in context (last 3 exchanges, for example)
+    conversation_context = "\n".join([f"Q: {h['question']}\nA: {h['answer']}" for h in chat_history[-3::]])
     
-    # Ask GPT using the retrieved context
+
+    # Propmt GPT
     propmt_template = PromptTemplate(
-        input_variables=["retrieved_chunks","query"],
-        template="You are a helpful assistant. Use the provided context to answer the question.\n\nContext: {retrieved_chunks}\nQuestion: {query}"
+        input_variables=["retrieved_chunks","conversation_context","query"],
+        template="""You are a helpful assistant. Use the provided context from documents and previous conversation to answer the question. Context from documents: {retrieved_chunks}
+
+        Previous conversation:
+        {conversation_context}
+
+        New question:
+        {query}"""
     )
 
-    prompt = propmt_template.format(retrieved_chunks=retrieved_chunks, query=question)
+    prompt = propmt_template.format(
+        retrieved_chunks=retrieved_chunks, 
+        conversation_context=conversation_context or "None",
+        query=question
+    )
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role":"user", "content": prompt}],
         temperature=0.2,
-        max_tokens=250
+        max_tokens=300
     )
-    return response.choices[0].message.content.strip()
+
+    answer = response.choices[0].message.content.strip()
+
+    # Save Q&A to memory
+    chat_history.append({"question": question, "answer": answer})
+
+    return answer
 
 # --- Step 7: CLI ---
 if __name__ == "__main__":
@@ -147,12 +162,15 @@ if __name__ == "__main__":
     faiss_store = store_chunks_in_faiss(chunks, embedding_model, faiss_index_path, metadata_list)
 
     print("\nRAG setup complete. Ask your questions!")
+
     # Q&A loop
+    # Collect chat history
+    chat_history = []
     while True:
         question = input("\nAsk a question (or 'exit'): ").strip()
         if question.lower() in ["exit", "quit"]:
             break
-        answer = answer_question_rag(question, faiss_store, client)
+        answer = answer_question_with_memory(question, faiss_store, client, chat_history)
         print("\nAnswer:", answer)
 
 
