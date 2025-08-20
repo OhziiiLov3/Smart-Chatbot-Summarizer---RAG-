@@ -24,13 +24,13 @@ flowchart TD
 
     A[Start] --> B{Input Source?}
     B -->|URL| C[Fetch Article Text with BeautifulSoup]
-    B -->|Files| D[Load Files from /data folder (.txt, .md, .pdf)]
+    B -->|Files| D[Load Files from /data folder - txt, md, pdf]
 
-    C --> E[Summarize with GPT (concise/detailed/etc.)]
+    C --> E[Summarize with GPT - concise/detailed/etc.]
     D --> E
 
-    E --> F[Split into Chunks (500-1000 chars)]
-    F --> G[Attach Metadata (filename, type, chunk ID)]
+    E --> F[Split into Chunks 500-1000 chars]
+    F --> G[Attach Metadata - filename, type, chunk ID]
 
     G --> H{FAISS Index Exists?}
     H -->|Yes| I[Load FAISS Index and Add New Chunks]
@@ -44,6 +44,7 @@ flowchart TD
     M --> N[Retrieve Relevant Chunks from FAISS]
     N --> O[Ask GPT with Retrieved Context]
     O --> P[Return Answer to User]
-    
+
     P --> L
+
 ```
